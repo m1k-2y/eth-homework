@@ -60,7 +60,6 @@ pragma solidity 0.8.26;
 // import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @dev ReentrancyGuard 사용 시: contract VaultSecure is ReentrancyGuard
-
 contract VaultSecure {
     // ============================================
     // 상태 변수
@@ -68,8 +67,6 @@ contract VaultSecure {
 
     /// @dev 사용자별 예치금 잔액
     mapping(address => uint256) public balances;
-
-    bool private locked;
 
     // ============================================
     // 이벤트
@@ -81,28 +78,46 @@ contract VaultSecure {
     /// @dev 출금 시 발생하는 이벤트
     event Withdrawn(address indexed user, uint256 amount);
 
-    modifier nonReentrant() {
-        require(!locked, "Reentrant detected");
-        locked = true;
-        _;
-        locked = false;
-    }
-
     // ============================================
     // 외부 함수
     // ============================================
 
+    /// @notice ETH를 Vault에 예치합니다
+    /// @dev msg.value만큼 예치하고 Deposited 이벤트를 발생시킵니다
+    ///
+    /// - msg.value를 balances[msg.sender]에 추가
+    /// - Deposited 이벤트 발생
+    ///
+    /// 힌트: Vault.sol의 deposit()과 동일하게 구현하면 됩니다
     function deposit() public payable {
         balances[msg.sender] += msg.value;
-        emit Deposited(msg.sender, msg.value);
+	emit Deposited(msg.sender, msg.value);
     }
 
-    function withdraw(uint256 amount) public nonReentrant {
-        require(balances[msg.sender] >= amount, "Insufficient balance");
-        balances[msg.sender] -= amount;
-        (bool success, ) = msg.sender.call{value:amount}("");
-        require(success, "Transfer failed");
-        emit Withdrawn(msg.sender, amount);
+    bool private locked;
+    /// @notice 예치한 ETH를 출금합니다
+    /// @param amount 출금할 ETH 양 (wei 단위)
+    ///
+    /// - 재진입 공격에 안전하게 구현
+    /// - CEI 패턴 또는 ReentrancyGuard 사용
+    ///
+    /// 필수 요소:
+    /// 1. 잔액 확인 (require)
+    /// 2. 잔액 차감 (balances 업데이트)
+    /// 3. ETH 전송 (call)
+    /// 4. Withdrawn 이벤트 발생
+    ///
+    /// CEI 패턴 사용 시 순서: Checks -> Effects -> Interactions
+    /// ReentrancyGuard 사용 시: nonReentrant modifier 추가
+    function withdraw(uint256 amount) public {
+        if (locked) return;
+	require(balances[msg.sender] >= amount, "Insufficient balance");
+	locked = true;
+	balances[msg.sender] -= amount;
+	(bool ok,) = msg.sender.call{value : amount}("");
+	locked = false;
+	require(ok, "Transfer failed");
+	emit Withdrawn(msg.sender, amount); 
     }
 
     // ============================================
